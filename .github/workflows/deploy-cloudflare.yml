@@ -24,6 +24,7 @@ jobs:
       D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID || vars.D1_DATABASE_ID }}
       KV_NAMESPACE_ID: ${{ secrets.KV_NAMESPACE_ID || vars.KV_NAMESPACE_ID }}
       R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME || vars.R2_BUCKET_NAME }}
+      PROJECT_LINK: ${{ secrets.PROJECT_LINK || vars.PROJECT_LINK }}
       LINUXDO_CLIENT_ID: ${{ secrets.LINUXDO_CLIENT_ID || vars.LINUXDO_CLIENT_ID }}
       LINUXDO_CLIENT_SECRET: ${{ secrets.LINUXDO_CLIENT_SECRET || vars.LINUXDO_CLIENT_SECRET }}
       LINUXDO_CALLBACK_URL: ${{ secrets.LINUXDO_CALLBACK_URL || vars.LINUXDO_CALLBACK_URL }}
@@ -31,6 +32,7 @@ jobs:
 
     outputs:
       worker_url: ${{ steps.deploy.outputs.worker_url }}
+
 
     steps:
       - name: 🚚 检出代码仓库 / Checkout repository
@@ -59,9 +61,9 @@ jobs:
       - name: 🛠️ 设置环境 / Set up environment
         working-directory: ./mail-worker
         run: |
+          
           echo "🔐 Starting environment setup..."
           
-          # 验证环境变量
           if [ -z "$JWT_SECRET" ] || grep -q '[?%#/\\]' <<< "$JWT_SECRET"; then
             echo "❌ JWT_SECRET variable is empty or contains invalid characters (?, %, #, /, \\)."
             exit 1
@@ -93,27 +95,12 @@ jobs:
           
           CONFIG_FILE="wrangler-action.toml"
           
-          # 调试：显示原始 pattern 行
-          echo "=== Original pattern line ==="
-          grep -n "pattern" "$CONFIG_FILE" || echo "No pattern line found"
-          
-          # ⭐ 关键修复：将 DOMAIN 转义为 TOML 字符串并替换 pattern 行
-          ESCAPED_DOMAIN=$(echo "$DOMAIN" | jq @json)
-          echo "DEBUG: DOMAIN raw value = $DOMAIN"
-          echo "DEBUG: ESCAPED_DOMAIN = $ESCAPED_DOMAIN"
-          
-          # 使用 awk 安全替换 pattern 行
-          awk -v new="$ESCAPED_DOMAIN" '/^[[:space:]]*pattern = / {print "pattern = " new; next} 1' "$CONFIG_FILE" > tmp && mv tmp "$CONFIG_FILE"
-          
-          # 调试：显示替换后的 pattern 行
-          echo "=== After pattern replacement ==="
-          grep -n "pattern" "$CONFIG_FILE" || echo "No pattern line found"
-          echo "=== Full config (first 20 lines) ==="
-          head -20 "$CONFIG_FILE"
-          
-          # 删除不需要的配置块
           if [ -z "$R2_BUCKET_NAME" ]; then
             sed -i '/\[\[r2_buckets\]\]/,/^$/d' "$CONFIG_FILE"
+          fi
+          
+          if [ -z "$PROJECT_LINK" ]; then
+            sed -i '/^project_link = /d' "$CONFIG_FILE"
           fi
           
           if [ -z "$LINUXDO_CLIENT_ID" ] || [ -z "$LINUXDO_CLIENT_SECRET" ]; then
@@ -124,25 +111,24 @@ jobs:
             sed -i '/\[\[routes\]\]/,/^$/d' "$CONFIG_FILE"
           fi
 
-          # 替换其他变量占位符
           sed -i "s|\${NAME}|${NAME}|g" "$CONFIG_FILE"
           sed -i "s|\${CUSTOM_DOMAIN}|${CUSTOM_DOMAIN}|g" "$CONFIG_FILE"
+          sed -i "s|\"\${DOMAIN}\"|${DOMAIN}|g" "$CONFIG_FILE"
           sed -i "s|\${ADMIN}|${ADMIN}|g" "$CONFIG_FILE"
           sed -i "s|\${JWT_SECRET}|${JWT_SECRET}|g" "$CONFIG_FILE"
           sed -i "s|\${R2_BUCKET_NAME}|${R2_BUCKET_NAME}|g" "$CONFIG_FILE"
+          sed -i "s|\${PROJECT_LINK}|${PROJECT_LINK}|g" "$CONFIG_FILE"
           sed -i "s|\${LINUXDO_CLIENT_ID}|${LINUXDO_CLIENT_ID}|g" "$CONFIG_FILE"
           sed -i "s|\${LINUXDO_CLIENT_SECRET}|${LINUXDO_CLIENT_SECRET}|g" "$CONFIG_FILE"
           sed -i "s|\${LINUXDO_CALLBACK_URL}|${LINUXDO_CALLBACK_URL}|g" "$CONFIG_FILE"
           sed -i "s|\${LINUXDO_SWITCH}|${LINUXDO_SWITCH}|g" "$CONFIG_FILE"
-          
-          echo "=== Final config after all replacements (first 20 lines) ==="
-          head -20 "$CONFIG_FILE"
           
           echo "✅ Environment setup completed."
 
       - name: ⚡ 设置KV数据库 / Set up KV database
         working-directory: ./mail-worker
         run: |
+          
           CONFIG_FILE="wrangler-action.toml"
           
           if [ -n "$KV_NAMESPACE_ID" ]; then
@@ -180,6 +166,7 @@ jobs:
       - name: 🐬 设置D1数据库 / Set up D1 database
         working-directory: ./mail-worker
         run: |
+          
           CONFIG_FILE="wrangler-action.toml"
           
           if [ -n "$D1_DATABASE_ID" ]; then
@@ -219,10 +206,6 @@ jobs:
         working-directory: ./mail-worker
         run: |
           echo "🚀 Starting deployment..."
-          # 在部署前再次显示 pattern 行，确认正确
-          echo "=== Final pattern line before deploy ==="
-          grep "pattern" wrangler-action.toml || echo "No pattern line"
-          
           pnpm wrangler deploy -c wrangler-action.toml 2>&1 \
             | tee deploy.log \
             | grep -v "https://.*\.workers\.dev" \
