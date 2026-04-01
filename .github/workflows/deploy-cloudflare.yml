@@ -59,7 +59,6 @@ jobs:
       - name: 🛠️ 设置环境 / Set up environment
         working-directory: ./mail-worker
         run: |
-          
           echo "🔐 Starting environment setup..."
           
           if [ -z "$JWT_SECRET" ] || grep -q '[?%#/\\]' <<< "$JWT_SECRET"; then
@@ -93,25 +92,24 @@ jobs:
           
           CONFIG_FILE="wrangler-action.toml"
           
+          # 删除 R2 配置（如果未设置）
           if [ -z "$R2_BUCKET_NAME" ]; then
             sed -i '/\[\[r2_buckets\]\]/,/^$/d' "$CONFIG_FILE"
           fi
           
+          # 删除 Linuxdo 配置（如果未设置）
           if [ -z "$LINUXDO_CLIENT_ID" ] || [ -z "$LINUXDO_CLIENT_SECRET" ]; then
             sed -i '/^linuxdo_client_id = /,/^linuxdo_switch = /d' "$CONFIG_FILE"
           fi
           
+          # 删除 routes 配置（如果未设置 CUSTOM_DOMAIN）
           if [ -z "$CUSTOM_DOMAIN" ]; then
             sed -i '/\[\[routes\]\]/,/^$/d' "$CONFIG_FILE"
           fi
 
+          # 替换普通变量（这些变量可能出现在配置文件的任何地方）
           sed -i "s|\${NAME}|${NAME}|g" "$CONFIG_FILE"
           sed -i "s|\${CUSTOM_DOMAIN}|${CUSTOM_DOMAIN}|g" "$CONFIG_FILE"
-          
-          # 修复：将 DOMAIN 转义为 TOML 字符串格式，确保 pattern 字段包含正确的 JSON 数组字符串
-          ESCAPED_DOMAIN=$(echo "$DOMAIN" | jq @json)
-          sed -i "s|\"\${DOMAIN}\"|${ESCAPED_DOMAIN}|g" "$CONFIG_FILE"
-          
           sed -i "s|\${ADMIN}|${ADMIN}|g" "$CONFIG_FILE"
           sed -i "s|\${JWT_SECRET}|${JWT_SECRET}|g" "$CONFIG_FILE"
           sed -i "s|\${R2_BUCKET_NAME}|${R2_BUCKET_NAME}|g" "$CONFIG_FILE"
@@ -120,12 +118,18 @@ jobs:
           sed -i "s|\${LINUXDO_CALLBACK_URL}|${LINUXDO_CALLBACK_URL}|g" "$CONFIG_FILE"
           sed -i "s|\${LINUXDO_SWITCH}|${LINUXDO_SWITCH}|g" "$CONFIG_FILE"
           
+          # ⭐ 关键修复：将 DOMAIN 转义为 TOML 字符串，并替换 pattern 行
+          # 1. 将 DOMAIN 转为 TOML 字符串（例如 "[\"example.com\",\"example2.com\"]"）
+          ESCAPED_DOMAIN=$(echo "$DOMAIN" | jq @json)
+          # 2. 替换 pattern 行：将 pattern = "..." 整行替换为 pattern = ESCAPED_DOMAIN
+          #    这样无论原行是 pattern = "" 还是 pattern = "xxx"，都能正确替换
+          sed -i "s|^pattern = \".*\"$|pattern = ${ESCAPED_DOMAIN}|" "$CONFIG_FILE"
+          
           echo "✅ Environment setup completed."
 
       - name: ⚡ 设置KV数据库 / Set up KV database
         working-directory: ./mail-worker
         run: |
-          
           CONFIG_FILE="wrangler-action.toml"
           
           if [ -n "$KV_NAMESPACE_ID" ]; then
@@ -163,7 +167,6 @@ jobs:
       - name: 🐬 设置D1数据库 / Set up D1 database
         working-directory: ./mail-worker
         run: |
-          
           CONFIG_FILE="wrangler-action.toml"
           
           if [ -n "$D1_DATABASE_ID" ]; then
