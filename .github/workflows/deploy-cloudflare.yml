@@ -61,6 +61,7 @@ jobs:
         run: |
           echo "🔐 Starting environment setup..."
           
+          # 验证环境变量
           if [ -z "$JWT_SECRET" ] || grep -q '[?%#/\\]' <<< "$JWT_SECRET"; then
             echo "❌ JWT_SECRET variable is empty or contains invalid characters (?, %, #, /, \\)."
             exit 1
@@ -92,22 +93,38 @@ jobs:
           
           CONFIG_FILE="wrangler-action.toml"
           
-          # 删除 R2 配置（如果未设置）
+          # 调试：显示原始 pattern 行
+          echo "=== Original pattern line ==="
+          grep -n "pattern" "$CONFIG_FILE" || echo "No pattern line found"
+          
+          # ⭐ 关键修复：将 DOMAIN 转义为 TOML 字符串并替换 pattern 行
+          ESCAPED_DOMAIN=$(echo "$DOMAIN" | jq @json)
+          echo "DEBUG: DOMAIN raw value = $DOMAIN"
+          echo "DEBUG: ESCAPED_DOMAIN = $ESCAPED_DOMAIN"
+          
+          # 使用 awk 安全替换 pattern 行
+          awk -v new="$ESCAPED_DOMAIN" '/^[[:space:]]*pattern = / {print "pattern = " new; next} 1' "$CONFIG_FILE" > tmp && mv tmp "$CONFIG_FILE"
+          
+          # 调试：显示替换后的 pattern 行
+          echo "=== After pattern replacement ==="
+          grep -n "pattern" "$CONFIG_FILE" || echo "No pattern line found"
+          echo "=== Full config (first 20 lines) ==="
+          head -20 "$CONFIG_FILE"
+          
+          # 删除不需要的配置块
           if [ -z "$R2_BUCKET_NAME" ]; then
             sed -i '/\[\[r2_buckets\]\]/,/^$/d' "$CONFIG_FILE"
           fi
           
-          # 删除 Linuxdo 配置（如果未设置）
           if [ -z "$LINUXDO_CLIENT_ID" ] || [ -z "$LINUXDO_CLIENT_SECRET" ]; then
             sed -i '/^linuxdo_client_id = /,/^linuxdo_switch = /d' "$CONFIG_FILE"
           fi
           
-          # 删除 routes 配置（如果未设置 CUSTOM_DOMAIN）
           if [ -z "$CUSTOM_DOMAIN" ]; then
             sed -i '/\[\[routes\]\]/,/^$/d' "$CONFIG_FILE"
           fi
 
-          # 替换普通变量（这些变量可能出现在配置文件的任何地方）
+          # 替换其他变量占位符
           sed -i "s|\${NAME}|${NAME}|g" "$CONFIG_FILE"
           sed -i "s|\${CUSTOM_DOMAIN}|${CUSTOM_DOMAIN}|g" "$CONFIG_FILE"
           sed -i "s|\${ADMIN}|${ADMIN}|g" "$CONFIG_FILE"
@@ -118,12 +135,8 @@ jobs:
           sed -i "s|\${LINUXDO_CALLBACK_URL}|${LINUXDO_CALLBACK_URL}|g" "$CONFIG_FILE"
           sed -i "s|\${LINUXDO_SWITCH}|${LINUXDO_SWITCH}|g" "$CONFIG_FILE"
           
-          # ⭐ 关键修复：将 DOMAIN 转义为 TOML 字符串，并替换 pattern 行
-          # 1. 将 DOMAIN 转为 TOML 字符串（例如 "[\"example.com\",\"example2.com\"]"）
-          ESCAPED_DOMAIN=$(echo "$DOMAIN" | jq @json)
-          # 2. 替换 pattern 行：将 pattern = "..." 整行替换为 pattern = ESCAPED_DOMAIN
-          #    这样无论原行是 pattern = "" 还是 pattern = "xxx"，都能正确替换
-          sed -i "s|^pattern = \".*\"$|pattern = ${ESCAPED_DOMAIN}|" "$CONFIG_FILE"
+          echo "=== Final config after all replacements (first 20 lines) ==="
+          head -20 "$CONFIG_FILE"
           
           echo "✅ Environment setup completed."
 
@@ -206,6 +219,10 @@ jobs:
         working-directory: ./mail-worker
         run: |
           echo "🚀 Starting deployment..."
+          # 在部署前再次显示 pattern 行，确认正确
+          echo "=== Final pattern line before deploy ==="
+          grep "pattern" wrangler-action.toml || echo "No pattern line"
+          
           pnpm wrangler deploy -c wrangler-action.toml 2>&1 \
             | tee deploy.log \
             | grep -v "https://.*\.workers\.dev" \
